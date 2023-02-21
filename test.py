@@ -1,35 +1,68 @@
-import cv2, numpy as np
+"""
+Remove text from images
 
-img1 = cv2.imread('data/img.png', cv2.IMREAD_GRAYSCALE)
+"""
 
-h, w = img1.shape
-sort_pepper_ratio = (np.uint32)((h*w)*0.1)
-sort_noise_x = np.full(shape=[sort_pepper_ratio], fill_value=0, dtype=np.uint16)
-sort_noise_y = np.full(shape=[sort_pepper_ratio], fill_value=0, dtype=np.uint16)
-pepper_noise_x = np.full(shape=[sort_pepper_ratio], fill_value=0, dtype=np.uint16)
-pepper_noise_y = np.full(shape=[sort_pepper_ratio], fill_value=0, dtype=np.uint16)
-gaussian_noise = np.full(shape=[h,w], fill_value=0, dtype=np.uint8)
-cv2.randu(sort_noise_x, 0, w); cv2.randn(sort_noise_y, 0, h)
-cv2.randu(pepper_noise_x, 0, w); cv2.randu(pepper_noise_y, 0, h)
-cv2.randn(gaussian_noise, 0, 20)
-sort_pepper_img = cv2.copyTo(img1, None)
-gaussian_noise_img = cv2.add(img1, gaussian_noise)
-for i in range(sort_pepper_ratio):
-    sort_pepper_img[sort_noise_y[i], sort_noise_x[i]] = 255
-    sort_pepper_img[pepper_noise_y[i], pepper_noise_x[i]] = 0
+import matplotlib.pyplot as plt
+import keras_ocr
+import cv2
+import math
+import numpy as np
 
-ksize1 = 3; ksize2 = 5
-res1 = cv2.medianBlur(sort_pepper_img, ksize1)
-res2 = cv2.medianBlur(sort_pepper_img, ksize2)
-res3 = cv2.blur(gaussian_noise_img, (ksize1, ksize1))
-res4 = cv2.GaussianBlur(gaussian_noise_img, (ksize1, ksize1), 0)
-res5 = cv2.bilateralFilter(gaussian_noise_img, -1 , 20, ksize1)
+#General Approach.....
+#Use keras OCR to detect text, define a mask around the text, and inpaint the
+#masked regions to remove the text.
+#To apply the mask we need to provide the coordinates of the starting and 
+#the ending points of the line, and the thickness of the line
 
-cv2.imshow('1', res1)
-cv2.imshow('2', res2)
-cv2.imshow('3', res3)
-cv2.imshow('4', res4)
-cv2.imshow('5', res5)
+#The start point will be the mid-point between the top-left corner and 
+#the bottom-left corner of the box. 
+#the end point will be the mid-point between the top-right corner and the bottom-right corner.
+#The following function does exactly that.
+def midpoint(x1, y1, x2, y2):
+    x_mid = int((x1 + x2)/2)
+    y_mid = int((y1 + y2)/2)
+    return (x_mid, y_mid)
 
-cv2.waitKey()
-cv2.destroyAllWindows()
+#Main function that detects text and inpaints. 
+#Inputs are the image path and kreas_ocr pipeline
+def inpaint_text(img_path, pipeline):
+    # read the image 
+    img = keras_ocr.tools.read(img_path) 
+    
+    # Recogize text (and corresponding regions)
+    # Each list of predictions in prediction_groups is a list of
+    # (word, box) tuples. 
+    prediction_groups = pipeline.recognize([img])
+    
+    #Define the mask for inpainting
+    mask = np.zeros(img.shape[:2], dtype="uint8")
+    for box in prediction_groups[0]:
+        x0, y0 = box[1][0]
+        x1, y1 = box[1][1] 
+        x2, y2 = box[1][2]
+        x3, y3 = box[1][3] 
+        
+        x_mid0, y_mid0 = midpoint(x1, y1, x2, y2)
+        x_mid1, y_mi1 = midpoint(x0, y0, x3, y3)
+        
+        #For the line thickness, we will calculate the length of the line between 
+        #the top-left corner and the bottom-left corner.
+        thickness = int(math.sqrt( (x2 - x1)**2 + (y2 - y1)**2 ))
+        
+        #Define the line and inpaint
+        cv2.line(mask, (x_mid0, y_mid0), (x_mid1, y_mi1), 255,    
+        thickness)
+        inpainted_img = cv2.inpaint(img, mask, 7, cv2.INPAINT_NS)
+                 
+    return(inpainted_img)
+
+# keras-ocr will automatically download pretrained
+# weights for the detector and recognizer.
+pipeline = keras_ocr.pipeline.Pipeline()
+
+img_text_removed = inpaint_text('data/pic.jpg', pipeline)
+
+plt.imshow(img_text_removed)
+
+cv2.imwrite('1.jpg', cv2.cvtColor(img_text_removed, cv2.COLOR_BGR2RGB))
